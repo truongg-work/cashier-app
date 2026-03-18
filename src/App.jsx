@@ -9,7 +9,6 @@ function App() {
     });
   };
 
-  // 1. Khởi tạo state từ localStorage để không mất dữ liệu
   const [orders, setOrders] = useState(() => {
     const savedOrders = localStorage.getItem("cashier_orders");
     return savedOrders
@@ -19,17 +18,17 @@ function App() {
             id: Date.now(),
             items: [],
             isPaid: false,
-            name: `Đơn lúc ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`,
+            name: `Đơn lúc ${getCurrentTimeName()}`,
             selected: false,
           },
         ];
   });
 
-  // 2. Lưu vào localStorage mỗi khi orders thay đổi
-  useEffect(() => {
-    localStorage.setItem("cashier_orders", JSON.stringify(orders));
-  }, [orders]);
-
+  const [activeOrderId, setActiveOrderId] = useState(orders[0]?.id);
+  const [editingItem, setEditingItem] = useState({
+    orderId: null,
+    index: null,
+  });
   const [focusedOrderId, setFocusedOrderId] = useState(null);
   const inputRefs = useRef({});
   const [confirmModal, setConfirmModal] = useState({
@@ -39,10 +38,24 @@ function App() {
   });
   const ordersEndRef = useRef(null);
 
+  // Logic chặn mất focus
+  const handleBackgroundClick = () => {
+    if (activeOrderId && inputRefs.current[activeOrderId]) {
+      inputRefs.current[activeOrderId].focus();
+    }
+  };
+
+  // Lưu LocalStorage
+  useEffect(() => {
+    localStorage.setItem("cashier_orders", JSON.stringify(orders));
+  }, [orders]);
+
+  // Tự động cuộn
   useEffect(() => {
     ordersEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [orders.length]);
 
+  // Tự động focus
   useEffect(() => {
     if (focusedOrderId && inputRefs.current[focusedOrderId]) {
       inputRefs.current[focusedOrderId].focus();
@@ -50,10 +63,23 @@ function App() {
     }
   }, [focusedOrderId, orders]);
 
+  // --- CẬP NHẬT PHÍM TẮT MỚI: DÙNG PHÍM * ---
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+      // e.key === "*" đại diện cho phím sao trên cả bàn phím số và bàn phím thường
+      if (e.key === "*") {
+        e.preventDefault(); // Chặn việc nhập ký tự * vào ô input
+        addNewOrder();
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
   const addNewOrder = () => {
     const newId = Date.now();
-    setOrders([
-      ...orders,
+    setOrders((prev) => [
+      ...prev,
       {
         id: newId,
         items: [],
@@ -62,6 +88,7 @@ function App() {
         selected: false,
       },
     ]);
+    setActiveOrderId(newId);
     setFocusedOrderId(newId);
   };
 
@@ -69,67 +96,62 @@ function App() {
     const amount = parseFloat(value);
     if (!amount) return;
     setOrders(
-      orders.map((order) =>
-        order.id === orderId
-          ? { ...order, items: [...order.items, amount * 1000] }
-          : order,
+      orders.map((o) =>
+        o.id === orderId ? { ...o, items: [...o.items, amount * 1000] } : o,
       ),
     );
+    setActiveOrderId(orderId);
   };
 
-  const togglePaid = (orderId) => {
+  const handleEditItem = (orderId, index, newValue) => {
+    const amount = parseFloat(newValue);
+    if (isNaN(amount)) {
+      setEditingItem({ orderId: null, index: null });
+      setFocusedOrderId(orderId);
+      return;
+    }
     setOrders(
-      orders.map((order) =>
-        order.id === orderId ? { ...order, isPaid: !order.isPaid } : order,
-      ),
+      orders.map((o) => {
+        if (o.id === orderId) {
+          const newItems = [...o.items];
+          newItems[index] = amount * 1000;
+          return { ...o, items: newItems };
+        }
+        return o;
+      }),
     );
+    setEditingItem({ orderId: null, index: null });
+    setFocusedOrderId(orderId);
   };
 
   const deleteOrder = (orderId) => {
     setConfirmModal({
       isOpen: true,
-      message: "Bạn có chắc chắn muốn xóa đơn hàng này không?",
+      message: "Bạn muốn xóa đơn hàng này?",
       onConfirm: () => {
         setOrders(orders.filter((o) => o.id !== orderId));
-        delete inputRefs.current[orderId];
         setConfirmModal({ ...confirmModal, isOpen: false });
       },
     });
   };
 
-  const toggleSelect = (orderId) => {
-    setOrders(
-      orders.map((order) =>
-        order.id === orderId ? { ...order, selected: !order.selected } : order,
-      ),
-    );
-  };
-
-  const toggleSelectAll = (e) => {
-    const isChecked = e.target.checked;
-    setOrders(orders.map((order) => ({ ...order, selected: isChecked })));
-  };
-
-  const deleteSelected = () => {
-    const count = orders.filter((o) => o.selected).length;
+  const deleteSelectedOrders = () => {
+    const selectedCount = orders.filter((o) => o.selected).length;
+    if (selectedCount === 0) return;
     setConfirmModal({
       isOpen: true,
-      message: `Bạn có chắc chắn muốn xóa ${count} đơn đã chọn?`,
+      message: `Bạn muốn xóa ${selectedCount} đơn hàng đã chọn?`,
       onConfirm: () => {
-        const selectedIds = orders.filter((o) => o.selected).map((o) => o.id);
         setOrders(orders.filter((o) => !o.selected));
-        selectedIds.forEach((id) => delete inputRefs.current[id]);
         setConfirmModal({ ...confirmModal, isOpen: false });
       },
     });
   };
 
-  // 3. HÀM IN MỚI SỬ DỤNG IFRAME (KHÔNG RELOAD TRANG)
   const handlePrint = (id) => {
     const orderElement = document.getElementById(`print-area-${id}`);
     if (!orderElement) return;
 
-    // Tạo một iframe ẩn
     const iframe = document.createElement("iframe");
     iframe.style.position = "absolute";
     iframe.style.width = "0px";
@@ -142,285 +164,331 @@ function App() {
 
     doc.open();
     doc.write(`
-      <html>
-        <head>
-          <style>
-            body { 
-              font-family: 'Courier New', Courier, monospace; 
-              width: 80mm; 
-              margin: 0; 
-              padding: 10px;
-              color: black;
-            }
-            @page { margin: 0; size: 80mm auto; }
-            hr { border-top: 1px dashed black; }
-            .flex { display: flex; justify-content: space-between; }
-          </style>
-        </head>
-        <body>
-          <div class="print-wrapper">
-            ${printContents}
-          </div>
-        </body>
-      </html>
-    `);
+    <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; width: 75mm; margin: 0; padding: 5px; color: black; }
+          @page { margin: 0; size: 80mm auto; }
+          hr { border: none; border-top: 2px dashed black; margin: 10px 0; }
+          .flex { display: flex; justify-content: space-between; }
+          h2 { font-size: 18px; text-align: center; }
+        </style>
+      </head>
+      <body>${printContents}</body>
+    </html>`);
     doc.close();
 
-    // Gọi lệnh in từ iframe
     iframe.contentWindow.focus();
-    iframe.contentWindow.print();
-
-    // Xóa iframe sau khi in xong
     setTimeout(() => {
+      iframe.contentWindow.print();
       document.body.removeChild(iframe);
-    }, 1000);
+    }, 250);
   };
 
-  const selectedCount = orders.filter((o) => o.selected).length;
-  const isAllSelected = orders.length > 0 && selectedCount === orders.length;
+  const hasSelected = orders.some((o) => o.selected);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24">
-      {/* MODAL XÁC NHẬN */}
+    <div
+      className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-24 select-none"
+      onClick={handleBackgroundClick}
+    >
+      {/* Modal Xác Nhận */}
       {confirmModal.isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"></div>
-          <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-8">
-            <div className="text-center">
-              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100 text-red-600 mb-4 font-bold text-3xl">
-                ⚠️
-              </div>
-              <h3 className="text-xl font-black mb-2">Xác nhận</h3>
-              <p className="text-slate-500 font-medium mb-8">
-                {confirmModal.message}
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() =>
-                    setConfirmModal({ ...confirmModal, isOpen: false })
-                  }
-                  className="flex-1 px-4 py-3 bg-slate-100 font-bold rounded-2xl"
-                >
-                  Hủy
-                </button>
-                <button
-                  onClick={confirmModal.onConfirm}
-                  className="flex-1 px-4 py-3 bg-red-500 text-white font-bold rounded-2xl"
-                >
-                  Đồng ý
-                </button>
-              </div>
+          <div className="relative bg-white rounded-3xl shadow-2xl max-w-sm w-full p-8 transition-all">
+            <h3 className="text-xl font-black mb-4 text-center">
+              Xác nhận xóa
+            </h3>
+            <p className="text-slate-500 text-center mb-8">
+              {confirmModal.message}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() =>
+                  setConfirmModal({ ...confirmModal, isOpen: false })
+                }
+                className="flex-1 py-3 bg-slate-100 font-bold rounded-2xl"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={confirmModal.onConfirm}
+                className="flex-1 py-3 bg-red-500 text-white font-bold rounded-2xl shadow-lg shadow-red-200"
+              >
+                Đồng ý
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* HEADER */}
-      <div className="sticky top-0 z-50 bg-slate-50/90 backdrop-blur-md border-b border-slate-200 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+      {/* Header */}
+      <div
+        className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-slate-200 shadow-sm">
-              <input
-                type="checkbox"
-                className="w-5 h-5 cursor-pointer accent-blue-600"
-                checked={isAllSelected}
-                onChange={toggleSelectAll}
-              />
-              <span className="text-xs font-bold text-slate-500 uppercase">
-                Tất cả
-              </span>
-            </div>
-            <div>
-              <h1 className="text-xl font-black text-blue-600 uppercase">
-                QUẢN LÝ BÁN HÀNG
-              </h1>
-              <p className="text-[10px] text-slate-400 font-bold italic mt-1 uppercase tracking-wider">
-                Nguyen Truong • x1.000đ
-              </p>
-            </div>
+            <input
+              type="checkbox"
+              className="w-5 h-5 accent-blue-600"
+              checked={orders.length > 0 && orders.every((o) => o.selected)}
+              onChange={(e) =>
+                setOrders(
+                  orders.map((o) => ({ ...o, selected: e.target.checked })),
+                )
+              }
+            />
+            <h1 className="text-xl font-black text-blue-600 uppercase">
+              BÁN HÀNG
+            </h1>
           </div>
-          <div className="flex items-center gap-3">
-            {selectedCount > 0 && (
+
+          <div className="flex gap-3">
+            {hasSelected && (
               <button
-                onClick={deleteSelected}
-                className="bg-red-50 text-red-600 px-4 py-3 rounded-xl font-bold text-sm border border-red-200"
+                onClick={deleteSelectedOrders}
+                className="bg-red-50 text-red-600 px-4 py-2 rounded-xl font-bold border border-red-200 hover:bg-red-100 transition-all"
               >
-                🗑️ Xóa {selectedCount}
+                XÓA ĐÃ CHỌN ({orders.filter((o) => o.selected).length})
               </button>
             )}
             <button
               onClick={addNewOrder}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg transition-all active:scale-95"
+              className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-200 active:scale-95 transition-all"
             >
-              + THÊM ĐƠN MỚI
+              + THÊM ĐƠN (Phím *)
             </button>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {orders.map((order) => {
-            const total = order.items.reduce((sum, i) => sum + i, 0);
+      {/* Main Content */}
+      <div className="max-w-7xl mx-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {orders.map((order) => {
+          const total = order.items.reduce((sum, i) => sum + i, 0);
+          const isActive = order.id === activeOrderId;
 
-            return (
+          return (
+            <div
+              key={order.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveOrderId(order.id);
+              }}
+              className={`bg-white rounded-[32px] border-2 transition-all duration-300 relative overflow-hidden
+                ${isActive ? "border-blue-600 ring-4 ring-blue-100 shadow-xl scale-[1.02] z-10" : "border-transparent shadow-sm hover:border-slate-200"}`}
+            >
+              {/* Card Header */}
               <div
-                key={order.id}
-                className={`bg-white rounded-3xl shadow-sm border-2 transition-all relative ${order.selected ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-100"}`}
+                className={`p-4 flex justify-between items-center ${order.isPaid ? "bg-green-500" : isActive ? "bg-blue-600" : "bg-slate-800"} text-white`}
               >
-                <div
-                  className={`p-4 flex justify-between items-center ${order.isPaid ? "bg-green-500 text-white" : "bg-slate-800 text-white"}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={order.selected}
-                      onChange={() => toggleSelect(order.id)}
-                      className="w-5 h-5 cursor-pointer accent-blue-400 rounded"
-                    />
-                    <span className="font-bold uppercase tracking-widest text-[10px]">
-                      {order.name}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handlePrint(order.id)}
-                      className="bg-white/20 hover:bg-white/40 p-1.5 rounded-lg transition-colors text-lg"
-                      title="In hóa đơn"
-                    >
-                      🖨️
-                    </button>
-                    <button
-                      onClick={() => deleteOrder(order.id)}
-                      className="opacity-50 hover:opacity-100 text-[10px] font-bold uppercase"
-                    >
-                      Xóa
-                    </button>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={order.selected}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) =>
+                      setOrders(
+                        orders.map((o) =>
+                          o.id === order.id
+                            ? { ...o, selected: e.target.checked }
+                            : o,
+                        ),
+                      )
+                    }
+                    className="w-4 h-4 accent-white"
+                  />
+                  <span className="text-[10px] font-bold uppercase">
+                    {order.name}
+                  </span>
                 </div>
-
-                <div className="p-5">
-                  <div
-                    onClick={() => togglePaid(order.id)}
-                    className={`cursor-pointer mb-4 py-3 px-4 rounded-2xl text-center font-black text-xs transition-all border-2 ${order.isPaid ? "bg-green-100 text-green-600 border-green-200" : "bg-orange-50 text-orange-600 border-orange-200 animate-pulse"}`}
+                <div className="flex gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handlePrint(order.id);
+                    }}
+                    className="p-2 hover:bg-white/20 rounded-lg transition-colors"
                   >
-                    {order.isPaid ? "✓ ĐÃ THANH TOÁN" : "● CHỜ THANH TOÁN"}
-                  </div>
-
-                  <div className="text-center mb-4">
-                    <h2
-                      className={`text-4xl font-black ${order.isPaid ? "text-green-600" : "text-slate-800"}`}
-                    >
-                      {total.toLocaleString("vi-VN")}{" "}
-                      <span className="text-sm font-normal opacity-50">đ</span>
-                    </h2>
-                  </div>
-
-                  {!order.isPaid && (
-                    <div className="relative mb-4">
-                      <input
-                        ref={(el) => (inputRefs.current[order.id] = el)}
-                        type="number"
-                        placeholder="Số tiền..."
-                        className="w-full bg-slate-50 border-2 border-slate-100 rounded-xl p-3 text-right font-black text-blue-600 text-xl focus:outline-none focus:border-blue-500 transition-all"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            handleAddItem(order.id, e.target.value);
-                            e.target.value = "";
-                          }
-                        }}
-                      />
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 font-black text-lg">
-                        .000
-                      </span>
-                    </div>
-                  )}
-
-                  {/* VÙNG NỘI DUNG SẼ IN (ẨN TRÊN WEB) */}
-                  <div id={`print-area-${order.id}`} className="hidden">
-                    <div style={{ textAlign: "center", marginBottom: "10px" }}>
-                      <h2 style={{ fontSize: "18px", margin: "0" }}>
-                        HÓA ĐƠN BÁN HÀNG
-                      </h2>
-                      <p style={{ fontSize: "10px" }}>{order.name}</p>
-                      <p style={{ fontSize: "10px" }}>
-                        Ngày: {new Date().toLocaleString("vi-VN")}
-                      </p>
-                      <hr />
-                    </div>
-                    <div style={{ minHeight: "100px" }}>
-                      {order.items.map((amount, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: "12px",
-                            marginBottom: "5px",
-                          }}
-                        >
-                          <span>Món {idx + 1}:</span>
-                          <span>{amount.toLocaleString("vi-VN")} đ</span>
-                        </div>
-                      ))}
-                    </div>
-                    <hr />
-                    <div style={{ textAlign: "right", marginTop: "10px" }}>
-                      <strong style={{ fontSize: "16px" }}>
-                        TỔNG: {total.toLocaleString("vi-VN")} đ
-                      </strong>
-                    </div>
-                    <div
-                      style={{
-                        textAlign: "center",
-                        marginTop: "20px",
-                        fontSize: "10px",
-                      }}
-                    >
-                      Cảm ơn quý khách!
-                      <br />
-                      Hẹn gặp lại.
-                    </div>
-                  </div>
-
-                  {/* HIỂN THỊ DANH SÁCH MÓN TRÊN WEB */}
-                  <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                    {order.items
-                      .slice()
-                      .reverse()
-                      .map((amount, idx) => (
-                        <div
-                          key={idx}
-                          className="flex justify-between text-sm py-2 border-b border-slate-50 last:border-0"
-                        >
-                          <span className="text-slate-400 font-medium text-xs">
-                            Món {order.items.length - idx}
-                          </span>
-                          <span className="font-bold text-slate-700">
-                            +{amount.toLocaleString("vi-VN")} đ
-                          </span>
-                        </div>
-                      ))}
-                  </div>
+                    🖨️
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteOrder(order.id);
+                    }}
+                    className="p-2 hover:bg-red-400 rounded-lg transition-colors font-bold text-xs"
+                  >
+                    XÓA
+                  </button>
                 </div>
               </div>
-            );
-          })}
-          <div ref={ordersEndRef} />
-        </div>
+
+              {/* Card Body */}
+              <div className="p-6" onClick={(e) => e.stopPropagation()}>
+                <div
+                  onClick={() =>
+                    setOrders(
+                      orders.map((o) =>
+                        o.id === order.id ? { ...o, isPaid: !o.isPaid } : o,
+                      ),
+                    )
+                  }
+                  className={`mb-4 py-2 rounded-2xl text-center font-black text-xs cursor-pointer border-2 transition-all
+                  ${order.isPaid ? "bg-green-50 text-green-600 border-green-200" : "bg-orange-50 text-orange-600 border-orange-200"}`}
+                >
+                  {order.isPaid ? "✓ ĐÃ THANH TOÁN" : "● CHỜ THANH TOÁN"}
+                </div>
+
+                <div className="text-center mb-6">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">
+                    Tổng cộng
+                  </span>
+                  <h2
+                    className={`text-4xl font-black ${order.isPaid ? "text-green-600" : "text-slate-800"}`}
+                  >
+                    {total.toLocaleString("vi-VN")}{" "}
+                    <span className="text-sm font-normal opacity-40">đ</span>
+                  </h2>
+                </div>
+
+                {!order.isPaid && (
+                  <div className="relative mb-6">
+                    <input
+                      ref={(el) => (inputRefs.current[order.id] = el)}
+                      type="number"
+                      placeholder="Nhập số..."
+                      onFocus={() => setActiveOrderId(order.id)}
+                      className={`w-full border-2 rounded-2xl p-4 text-right font-black text-2xl outline-none transition-all
+                        ${isActive ? "border-blue-300 bg-blue-50 text-blue-700 shadow-inner" : "border-slate-100 bg-slate-50"}`}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          handleAddItem(order.id, e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                    />
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-300">
+                      .000
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar">
+                  {order.items
+                    .slice()
+                    .reverse()
+                    .map((amount, revIdx) => {
+                      const originalIdx = order.items.length - 1 - revIdx;
+                      const isEditing =
+                        editingItem.orderId === order.id &&
+                        editingItem.index === originalIdx;
+
+                      return (
+                        <div
+                          key={originalIdx}
+                          className="flex justify-between items-center group cursor-pointer"
+                          onClick={() =>
+                            !order.isPaid &&
+                            setEditingItem({
+                              orderId: order.id,
+                              index: originalIdx,
+                            })
+                          }
+                        >
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                            Mã {originalIdx + 1}
+                          </span>
+                          {isEditing ? (
+                            <div className="flex items-center border-b-2 border-blue-500 animate-pulse">
+                              <input
+                                autoFocus
+                                type="number"
+                                defaultValue={amount / 1000}
+                                onFocus={(e) => e.target.select()}
+                                onBlur={(e) =>
+                                  handleEditItem(
+                                    order.id,
+                                    originalIdx,
+                                    e.target.value,
+                                  )
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter")
+                                    handleEditItem(
+                                      order.id,
+                                      originalIdx,
+                                      e.target.value,
+                                    );
+                                  if (e.key === "Escape") {
+                                    setEditingItem({
+                                      orderId: null,
+                                      index: null,
+                                    });
+                                    setFocusedOrderId(order.id);
+                                  }
+                                }}
+                                className="w-16 text-right font-black outline-none bg-transparent"
+                              />
+                              <span className="text-blue-500 font-bold">
+                                .000
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-slate-700 group-hover:text-blue-600 transition-colors">
+                              +{amount.toLocaleString("vi-VN")} đ
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Print Template (Hidden) */}
+              <div id={`print-area-${order.id}`} className="hidden">
+                <div style={{ textAlign: "center" }}>
+                  <h3>HÓA ĐƠN</h3>
+                  <p>{order.name}</p>
+                  <hr />
+                </div>
+                {order.items.map((a, i) => (
+                  <div
+                    key={i}
+                    style={{ display: "flex", justifyContent: "space-between" }}
+                  >
+                    <span>Mã {i + 1}:</span>
+                    <span>{a.toLocaleString()}đ</span>
+                  </div>
+                ))}
+                <hr />
+                <div style={{ textAlign: "right" }}>
+                  <strong>TỔNG: {total.toLocaleString()}đ</strong>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={ordersEndRef} />
       </div>
 
-      <div className="fixed bottom-6 right-6 bg-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl border border-slate-700 z-50">
-        <p className="text-[10px] opacity-50 font-bold uppercase tracking-wider text-slate-400">
-          Tiền đang nợ
-        </p>
-        <p className="text-2xl font-black text-red-400">
+      {/* Footer Tổng Nợ */}
+      <div className="fixed bottom-6 right-6 bg-slate-800 text-white px-6 py-4 rounded-2xl shadow-2xl z-50 flex flex-col items-end">
+        <span className="text-[10px] font-bold uppercase text-slate-400">
+          Tổng tiền nợ
+        </span>
+        <span className="text-2xl font-black text-red-400">
           {orders
             .filter((o) => !o.isPaid)
             .reduce((acc, o) => acc + o.items.reduce((s, i) => s + i, 0), 0)
             .toLocaleString("vi-VN")}{" "}
           đ
-        </p>
+        </span>
       </div>
     </div>
   );
